@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Analizador Léxico, Sintáctico y Árbol</title>
+<style>
+    body { font-family: system-ui, Arial, sans-serif; margin: 0; background:#f5f8fb; color:#222; }
+    header { background:#2a4d7a; color:#fff; padding:18px 30px; }
+    header h1 { margin:0; font-size:20px; }
+    main { padding: 20px 30px 60px; display:flex; flex-direction:column; gap:32px; }
+    .panel { background:#fff; border:1px solid #cbd4e2; border-radius:10px; padding:18px 22px; box-shadow:0 4px 10px -2px rgba(0,30,70,.08); }
+    h2 { margin-top:0; font-size:18px; color:#1a3858; }
+    textarea { width:100%; min-height:160px; font-family:monospace; resize:vertical; padding:10px; border:1px solid #9fb4cc; border-radius:6px; background:#fcfdff; }
+    button { background:#2a4d7a; color:#fff; border:none; padding:10px 20px; font-size:14px; border-radius:6px; cursor:pointer; display:inline-flex; align-items:center; gap:6px; }
+    button:hover { background:#1d344f; }
+    table { width:100%; border-collapse: collapse; margin-top:12px; font-size:13px; }
+    th, td { border:1px solid #99b3cc; padding:6px 8px; text-align:left; }
+    th { background:#e7f0fa; }
+    .error { color:#b30018; font-weight:600; }
+    .success { color:#186a2e; font-weight:600; }
+    ul.derivaciones { columns:2; -webkit-columns:2; -moz-columns:2; font-size:12px; padding-left:18px; }
+    details summary { cursor:pointer; font-weight:600; margin:4px 0; }
+    /* Árbol sintáctico */
+    .tree-container { overflow:auto; max-height:600px; border:1px solid #c5d3e0; border-radius:8px; padding:14px; background:#fbfdff; position:relative; }
+    .tree { font-family: "JetBrains Mono", monospace; font-size:12px; line-height:1.25; white-space:nowrap; }
+    .tree ul { position:relative; padding-left:18px; margin:0; list-style:none; }
+    .tree li { position:relative; padding:2px 0 2px 16px; }
+    .tree li::before { content:""; position:absolute; top:0; left:4px; width:10px; height:100%; border-left:1px solid #6d8aaa; }
+    .tree li::after { content:""; position:absolute; top:10px; left:4px; width:12px; height:0; border-top:1px solid #6d8aaa; }
+    .tree li:last-child::before { height:10px; }
+    .node-label { display:inline-block; background:#eef5fc; border:1px solid #7ea6cc; padding:2px 6px; border-radius:4px; box-shadow:0 1px 2px rgba(0,0,0,.06); }
+  /* Colapsado */
+  .tree li.collapsed > ul { display:none; }
+  .tree li > .node-label { position:relative; padding-left:14px; cursor:pointer; }
+  .tree li > .node-label::before { content:'▾'; position:absolute; left:2px; top:2px; font-size:10px; color:#375972; }
+  .tree li.collapsed > .node-label::before { content:'▸'; }
+    .node-terminal { background:#fff7e6; border-color:#d8a451; }
+    .node-type { color:#2d577a; font-weight:600; }
+    .node-token { color:#7a4b00; }
+    .legend { display:flex; gap:16px; font-size:12px; margin-bottom:8px; }
+    .badge { padding:2px 6px; border-radius:4px; font-weight:600; border:1px solid #999; background:#eee; }
+    .badge.nt { background:#eef5fc; border-color:#7ea6cc; color:#204666; }
+    .badge.t { background:#fff7e6; border-color:#d8a451; color:#6a4100; }
+    .highlight { animation: pulse 1.3s ease-in-out 1; }
+    @keyframes pulse { 0% { box-shadow:0 0 0 0 rgba(42,77,122,.6);} 70% { box-shadow:0 0 0 8px rgba(42,77,122,0);} 100% { box-shadow:0 0 0 0 rgba(42,77,122,0);} }
+    .split { display:grid; gap:22px; grid-template-columns:repeat(auto-fit,minmax(320px,1fr)); align-items:start; }
+    .small { font-size:11px; opacity:.8; }
+    .sticky-bar { position:sticky; top:-18px; background:linear-gradient(#fbfdff,#fbfdff 70%,rgba(251,253,255,0)); padding:4px 0 8px; z-index:5; }
+  /* Barra del árbol */
+  .tree-toolbar { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0 12px; align-items:center; }
+  .tree-toolbar button { background:#35608a; padding:6px 14px; font-size:12px; border-radius:5px; border:none; cursor:pointer; color:#fff; }
+  .tree-toolbar button:hover { background:#234461; }
+  .tree-toolbar .group { display:flex; gap:6px; align-items:center; }
+  #syntax-inline { background:#f0f6fb; border:1px solid #c3d5e4; padding:8px 10px; border-radius:6px; font-size:12px; margin-bottom:10px; max-height:170px; overflow:auto; }
+  #syntax-inline h4 { margin:2px 0 6px; font-size:12px; letter-spacing:.5px; color:#204d70; }
+  #syntax-inline ul { margin:0; padding-left:16px; columns:2; }
+  #syntax-inline .success { color:#0d6e23; }
+  #syntax-inline .error { color:#b30018; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Analizador Léxico y Sintáctico LR + Árbol Sintáctico</h1>
+</header>
+<main>
+  <div class="panel">
+    <h2>Entrada</h2>
+    <p class="small">Ejemplo incluido: variables globales, función con parámetros y main con asignaciones y llamada a función.</p>
+    <textarea id="source"></textarea>
+    <div style="display:flex; gap:12px; flex-wrap:wrap; margin-top:10px;">
+      <button onclick="analizar()">Analizar (Tokens + Sintaxis + Árbol)</button>
+      <button onclick="cargarEjemplo()">Cargar Ejemplo</button>
+      <button onclick="expandirArbol()">Expandir Árbol</button>
+      <button onclick="colapsarArbol()">Colapsar Árbol</button>
+    </div>
+  </div>
+
+  <div class="split">
+    <div class="panel" id="tokens-panel">
+      <h2>Tokens</h2>
+      <div id="tokens"></div>
+    </div>
+    <div class="panel" id="syntax-panel">
+      <h2>Análisis Sintáctico</h2>
+      <div id="errors"></div>
+      <div id="syntax"></div>
+    </div>
+  </div>
+
+  <div class="panel" id="tree-panel">
+    <h2>Árbol Sintáctico (Parse Tree)</h2>
+    <div class="legend">
+      <span class="badge nt">No Terminal</span>
+      <span class="badge t">Terminal</span>
+    </div>
+    <div class="tree-toolbar">
+      <div class="group">
+        <button type="button" onclick="analizar()" title="Re-analizar (Ctrl+Enter)">🔄 Analizar</button>
+        <button type="button" onclick="expandirArbol()" title="Expandir todo">🟢 Expandir</button>
+        <button type="button" onclick="colapsarArbol()" title="Colapsar todo">🔻 Colapsar</button>
+      </div>
+      <div class="group" style="background:#eef5fc; border:1px solid #7ea6cc; padding:4px 8px; border-radius:6px;">
+        <label style="display:flex; gap:6px; align-items:center; font-size:11px;">Prof:
+          <input id="depthRange" type="range" min="1" max="40" value="40" oninput="aplicarProfundidad(this.value)" />
+          <span id="depthValue">∞</span>
+        </label>
+        <button type="button" style="background:#2a4d7a;" onclick="resetProfundidad()" title="Profundidad completa">∞</button>
+      </div>
+      <div class="group">
+        <button type="button" onclick="exportarArbolJSON()" title="Exportar árbol JSON">📤 Árbol</button>
+        <button type="button" onclick="exportarTokensCSV()" title="Exportar tokens CSV">📄 Tokens</button>
+      </div>
+      <div class="group">
+        <button type="button" id="btnAutoScroll" onclick="toggleAutoScroll()" title="Auto scroll al analizar">⬇️ AutoScroll</button>
+      </div>
+    </div>
+    <div id="syntax-inline"></div>
+    <div class="tree-container">
+      <div id="parse-tree" class="tree"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Animación LR (Ejemplo reducido E → id + id)</h2>
+    <table>
+        <tr><th>Estado</th><th>id</th><th>+</th><th>$</th><th>E</th></tr>
+        <tr><td>0</td><td>d2</td><td></td><td></td><td>1</td></tr>
+        <tr><td>1</td><td></td><td></td><td>acept</td><td></td></tr>
+        <tr><td>2</td><td></td><td>d3</td><td></td><td></td></tr>
+        <tr><td>3</td><td>d4</td><td></td><td></td><td></td></tr>
+        <tr><td>4</td><td></td><td></td><td>r1</td><td></td></tr>
+    </table>
+    <table class="animation-table" style="margin-top:14px;">
+      <thead><tr><th>Pila</th><th>Entrada</th><th>Acción</th></tr></thead>
+      <tbody id="animation-body-1"></tbody>
+    </table>
+    <button onclick="startAnimation1()">Iniciar Animación</button>
+  </div>
+
+</main>
+<script>
+// ==================== LÉXICO =====================
+const tokenTypes = { identificador:0, entero:1, real:2, cadena:3, tipo:4, opSuma:5, opMul:6, opRelac:7, opOr:8, opAnd:9, opNot:10, opIgualdad:11, ';':12, ',':13, '(':14, ')':15, '{':16, '}':17, '=':18, if:19, while:20, return:21, else:22, '$':23 };
+const reserved = ["if","else","while","return","int","float","string","void"];
+const tipos = ["int","float","string","void"];
+const tokenSpecs = [
+  {type:"WHITESPACE", regex:/^\s+/, ignore:true},
+  {type:"COMMENT", regex:/^\/\/.*/, ignore:true},
+  {type:"real", regex:/^\d+\.\d+/, tokenNum:2},
+  {type:"entero", regex:/^\d+/, tokenNum:1},
+  {type:"cadena", regex:/^"([^"\\]|\\.)*"/, tokenNum:3},
+  {type:"opIgualdad", regex:/^(==|!=)/, tokenNum:11},
+  {type:"opRelac", regex:/^(<=|>=|<|>)/, tokenNum:7},
+  {type:"opOr", regex:/^\|\|/, tokenNum:8},
+  {type:"opAnd", regex:/^&&/, tokenNum:9},
+  {type:"opSuma", regex:/^[+\-]/, tokenNum:5},
+  {type:"opMul", regex:/^[*\/]/, tokenNum:6},
+  {type:"opNot", regex:/^!/, tokenNum:10},
+  {type:"identificador", regex:/^[a-zA-Z_][a-zA-Z0-9_]*/, tokenNum:0},
+  {type:";", regex:/^;/, tokenNum:12},
+  {type:",", regex:/^,/, tokenNum:13},
+  {type:"(", regex:/^\(/, tokenNum:14},
+  {type:")", regex:/^\)/, tokenNum:15},
+  {type:"{", regex:/^\{/, tokenNum:16},
+  {type:"}", regex:/^\}/, tokenNum:17},
+  {type:"=", regex:/^=/, tokenNum:18}
+];
+function lexer(input){
+  let tokens=[], errors=[], pos=0;
+  while(pos < input.length){
+    let match=false;
+    for(const spec of tokenSpecs){
+      const m=spec.regex.exec(input.slice(pos));
+      if(m){
+        match=true;
+        if(!spec.ignore){
+          let value=m[0];
+            let type=spec.type;
+            let tokenNum=spec.tokenNum;
+            if(type==="identificador"){
+              // Primero verificar si es un tipo
+              if(tipos.includes(value)){
+                type="tipo"; tokenNum=4;
+              } else if(reserved.includes(value)) {
+                // Palabras reservadas no tipo
+                type=value; tokenNum=tokenTypes[value];
+              }
+            }
+            tokens.push({type,value,pos, tokenNum});
+        }
+        pos+=m[0].length;
+        break;
+      }
+    }
+    if(!match){ errors.push(`Error léxico en posición ${pos}: carácter inesperado '${input[pos]}'`); pos++; }
+  }
+  tokens.push({type:"$", value:"$", pos, tokenNum:23});
+  return {tokens, errors};
+}
+
+// ==================== ÁRBOL: Nodo =====================
+class ASTNode {
+  constructor(label, options={}){ this.label=label; this.type=options.type||'NT'; this.token=options.token||null; this.children=[]; }
+  add(child){ if(child) this.children.push(child); return child; }
+}
+
+// ==================== PARSER (Recursivo c/ Precedencia) =====================
+class Parser {
+  constructor(tokens){ this.tokens=tokens; this.pos=0; this.errors=[]; this.derivaciones=[]; this.root=null; }
+  peek(o=0){ return this.pos+o < this.tokens.length ? this.tokens[this.pos+o] : null; }
+  matchType(t){ const tk=this.peek(); return tk && (tk.type===t || tk.tokenNum===t); }
+  consume(t){ const tk=this.peek(); if(tk && (tk.type===t || tk.tokenNum===t)){ this.pos++; return tk; } this.errors.push(`Error sintáctico: se esperaba '${t}' y se encontró '${tk?tk.type:'EOF'}'`); return null; }
+
+  parse(){ const prog=this.programa(); if(!this.errors.length && !this.matchType('$')){ this.errors.push('Tokens restantes sin consumir.'); }
+    if(!this.errors.length) this.root=prog; return {root:this.root, derivaciones:this.derivaciones, errors:this.errors, accepted:!this.errors.length}; }
+
+  programa(){ this.derivaciones.push('R1: programa → Definiciones'); const node=new ASTNode('programa'); node.add(this.definiciones()); return node; }
+  definiciones(){ if(this.matchType('$')){ this.derivaciones.push('R2: Definiciones → ε'); return new ASTNode('ε'); }
+    this.derivaciones.push('R3: Definiciones → Definicion Definiciones'); const node=new ASTNode('Definiciones'); node.add(this.definicion()); node.add(this.definiciones()); return node; }
+  definicion(){ if(!this.matchType('tipo')) { this.errors.push('Error: Se esperaba inicio de Definicion (tipo).'); return new ASTNode('Definicion(ERROR)'); }
+    // lookahead para función
+    const save=this.pos; this.consume('tipo'); this.consume('identificador'); if(this.matchType('(')){ this.pos=save; this.derivaciones.push('R5: Definicion → DefFunc'); return this.defFunc(); } else { this.pos=save; this.derivaciones.push('R4: Definicion → DefVar'); return this.defVar(); } }
+  defVar(){ this.derivaciones.push('R6: DefVar → tipo identificador ListaVar ;'); const node=new ASTNode('DefVar'); node.add(this.leafIfToken(this.consume('tipo'))); node.add(this.leafIfToken(this.consume('identificador'))); node.add(this.listaVar()); this.leafIfToken(this.consume(';'), node); return node; }
+  listaVar(){ if(this.matchType(',')){ this.derivaciones.push('R8: ListaVar → , identificador ListaVar'); const node=new ASTNode('ListaVar'); this.leafIfToken(this.consume(','), node); node.add(this.leafIfToken(this.consume('identificador'))); node.add(this.listaVar()); return node; } this.derivaciones.push('R7: ListaVar → ε'); return new ASTNode('ε'); }
+  defFunc(){ this.derivaciones.push('R9: DefFunc → tipo identificador ( Parametros ) BloqFunc'); const node=new ASTNode('DefFunc'); node.add(this.leafIfToken(this.consume('tipo'))); node.add(this.leafIfToken(this.consume('identificador'))); this.leafIfToken(this.consume('('), node); node.add(this.parametros()); this.leafIfToken(this.consume(')'), node); node.add(this.bloqFunc()); return node; }
+  parametros(){ if(this.matchType('tipo')){ this.derivaciones.push('R11: Parametros → tipo identificador ListaParam'); const node=new ASTNode('Parametros'); node.add(this.leafIfToken(this.consume('tipo'))); node.add(this.leafIfToken(this.consume('identificador'))); node.add(this.listaParam()); return node; } this.derivaciones.push('R10: Parametros → ε'); return new ASTNode('ε'); }
+  listaParam(){ if(this.matchType(',')){ this.derivaciones.push('R13: ListaParam → , tipo identificador ListaParam'); const node=new ASTNode('ListaParam'); this.leafIfToken(this.consume(','), node); node.add(this.leafIfToken(this.consume('tipo'))); node.add(this.leafIfToken(this.consume('identificador'))); node.add(this.listaParam()); return node; } this.derivaciones.push('R12: ListaParam → ε'); return new ASTNode('ε'); }
+  bloqFunc(){ this.derivaciones.push('R14: BloqFunc → { DefLocales }'); const node=new ASTNode('BloqFunc'); this.leafIfToken(this.consume('{'), node); node.add(this.defLocales()); this.leafIfToken(this.consume('}'), node); return node; }
+  defLocales(){ if(this.matchType('}')){ this.derivaciones.push('R15: DefLocales → ε'); return new ASTNode('ε'); } this.derivaciones.push('R16: DefLocales → DefLocal DefLocales'); const node=new ASTNode('DefLocales'); node.add(this.defLocal()); node.add(this.defLocales()); return node; }
+  defLocal(){ if(this.matchType('tipo')){ this.derivaciones.push('R17: DefLocal → DefVar'); const node=new ASTNode('DefLocal'); node.add(this.defVar()); return node; } this.derivaciones.push('R18: DefLocal → Sentencia'); const node=new ASTNode('DefLocal'); node.add(this.sentencia()); return node; }
+  sentencia(){ if(this.matchType('identificador')){ // lookahead to distinguish assignment vs call
+      if(this.peek(1) && this.peek(1).type==='('){ // function call; rule 25
+        this.derivaciones.push('R25: Sentencia → LlamadaFunc ;'); const node=new ASTNode('Sentencia'); node.add(this.llamadaFunc()); this.leafIfToken(this.consume(';'), node); return node; }
+      this.derivaciones.push('R21: Sentencia → identificador = Expresion ;'); const node=new ASTNode('Sentencia'); node.add(this.leafIfToken(this.consume('identificador'))); this.leafIfToken(this.consume('='), node); node.add(this.expresion()); this.leafIfToken(this.consume(';'), node); return node; }
+    if(this.matchType('return')){ this.derivaciones.push('R24: Sentencia → return ValorRegresa ;'); const node=new ASTNode('Sentencia'); this.leafIfToken(this.consume('return'), node); node.add(this.valorRegresa()); this.leafIfToken(this.consume(';'), node); return node; }
+    if(this.matchType('if')){ this.derivaciones.push('R22: Sentencia → if ( Expresion ) SentenciaBloque Otro'); const node=new ASTNode('Sentencia'); this.leafIfToken(this.consume('if'), node); this.leafIfToken(this.consume('('), node); node.add(this.expresion()); this.leafIfToken(this.consume(')'), node); node.add(this.sentenciaBloque()); node.add(this.otro()); return node; }
+    if(this.matchType('while')){ this.derivaciones.push('R23: Sentencia → while ( Expresion ) Bloque'); const node=new ASTNode('Sentencia'); this.leafIfToken(this.consume('while'), node); this.leafIfToken(this.consume('('), node); node.add(this.expresion()); this.leafIfToken(this.consume(')'), node); node.add(this.bloque()); return node; }
+    this.errors.push('Sentencia no reconocida en token '+(this.peek()?this.peek().value:'EOF')); return new ASTNode('Sentencia(ERROR)'); }
+  sentenciaBloque(){ if(this.matchType('{')){ this.derivaciones.push('R42: SentenciaBloque → Bloque'); const node=new ASTNode('SentenciaBloque'); node.add(this.bloque()); return node; } this.derivaciones.push('R41: SentenciaBloque → Sentencia'); const node=new ASTNode('SentenciaBloque'); node.add(this.sentencia()); return node; }
+  bloque(){ this.derivaciones.push('R28: Bloque → { Sentencias }'); const node=new ASTNode('Bloque'); this.leafIfToken(this.consume('{'), node); node.add(this.sentencias()); this.leafIfToken(this.consume('}'), node); return node; }
+  sentencias(){ if(this.matchType('}')){ this.derivaciones.push('R19: Sentencias → ε'); return new ASTNode('ε'); } this.derivaciones.push('R20: Sentencias → Sentencia Sentencias'); const node=new ASTNode('Sentencias'); node.add(this.sentencia()); node.add(this.sentencias()); return node; }
+  otro(){ if(this.matchType('else')){ this.derivaciones.push('R27: Otro → else SentenciaBloque'); const node=new ASTNode('Otro'); this.leafIfToken(this.consume('else'), node); node.add(this.sentenciaBloque()); return node; } this.derivaciones.push('R26: Otro → ε'); return new ASTNode('ε'); }
+  valorRegresa(){ if(this.iniciaExpresion()){ this.derivaciones.push('R30: ValorRegresa → Expresion'); const node=new ASTNode('ValorRegresa'); node.add(this.expresion()); return node; } this.derivaciones.push('R29: ValorRegresa → ε'); return new ASTNode('ε'); }
+  argumentos(){ if(!this.iniciaExpresion()) { this.derivaciones.push('R31: Argumentos → ε'); return new ASTNode('ε'); } this.derivaciones.push('R32: Argumentos → Expresion ListaArgumentos'); const node=new ASTNode('Argumentos'); node.add(this.expresion()); node.add(this.listaArgumentos()); return node; }
+  listaArgumentos(){ if(this.matchType(',')){ this.derivaciones.push('R34: ListaArgumentos → , Expresion ListaArgumentos'); const node=new ASTNode('ListaArgumentos'); this.leafIfToken(this.consume(','), node); node.add(this.expresion()); node.add(this.listaArgumentos()); return node; } this.derivaciones.push('R33: ListaArgumentos → ε'); return new ASTNode('ε'); }
+  llamadaFunc(){ this.derivaciones.push('R40: LlamadaFunc → identificador ( Argumentos )'); const node=new ASTNode('LlamadaFunc'); node.add(this.leafIfToken(this.consume('identificador'))); this.leafIfToken(this.consume('('), node); node.add(this.argumentos()); this.leafIfToken(this.consume(')'), node); return node; }
+  termino(){
+    if(this.matchType('identificador')){
+      if(this.peek(1) && this.peek(1).type==='('){
+        this.derivaciones.push('R35: Termino → LlamadaFunc');
+        const node=new ASTNode('Termino');
+        node.add(this.llamadaFunc());
+        return node;
+      }
+      this.derivaciones.push('R36: Termino → identificador');
+      const node=new ASTNode('Termino');
+      node.add(this.leafIfToken(this.consume('identificador')));
+      return node;
+    }
+    if(this.matchType('entero')){
+      this.derivaciones.push('R37: Termino → entero');
+      const node=new ASTNode('Termino');
+      node.add(this.leafIfToken(this.consume('entero')));
+      return node;
+    }
+    if(this.matchType('real')){
+      this.derivaciones.push('R38: Termino → real');
+      const node=new ASTNode('Termino');
+      node.add(this.leafIfToken(this.consume('real')));
+      return node;
+    }
+    if(this.matchType('cadena')){
+      this.derivaciones.push('R39: Termino → cadena');
+      const node=new ASTNode('Termino');
+      node.add(this.leafIfToken(this.consume('cadena')));
+      return node;
+    }
+    this.errors.push('Termino inválido en '+(this.peek()?this.peek().value:'EOF'));
+    return new ASTNode('Termino(ERROR)');
+  }
+
+  // ---------- Expresiones con precedencia ----------
+  iniciaExpresion(){ return this.matchType('(')|| this.matchType('opSuma')|| this.matchType('opNot')|| this.matchType('identificador')|| this.matchType('entero')|| this.matchType('real')|| this.matchType('cadena'); }
+  expresion(){ // nivel más alto OR
+    const node=this.expOr(); return node; }
+  expOr(){ let left=this.expAnd(); while(this.matchType('opOr')){ this.derivaciones.push('R51: Expresion → Expresion opOr Expresion'); const op=this.consume('opOr'); const parent=new ASTNode('Expresion'); parent.add(left); parent.add(this.leafIfToken(op)); parent.add(this.expAnd()); left=parent; } return left; }
+  expAnd(){ let left=this.expIgual(); while(this.matchType('opAnd')){ this.derivaciones.push('R50: Expresion → Expresion opAnd Expresion'); const op=this.consume('opAnd'); const parent=new ASTNode('Expresion'); parent.add(left); parent.add(this.leafIfToken(op)); parent.add(this.expIgual()); left=parent; } return left; }
+  expIgual(){ let left=this.expRel(); while(this.matchType('opIgualdad')){ this.derivaciones.push('R49: Expresion → Expresion opIgualdad Expresion'); const op=this.consume('opIgualdad'); const parent=new ASTNode('Expresion'); parent.add(left); parent.add(this.leafIfToken(op)); parent.add(this.expRel()); left=parent; } return left; }
+  expRel(){ let left=this.expAdd(); while(this.matchType('opRelac')){ this.derivaciones.push('R48: Expresion → Expresion opRelac Expresion'); const op=this.consume('opRelac'); const parent=new ASTNode('Expresion'); parent.add(left); parent.add(this.leafIfToken(op)); parent.add(this.expAdd()); left=parent; } return left; }
+  expAdd(){ let left=this.expMul(); while(this.matchType('opSuma')){ this.derivaciones.push('R47: Expresion → Expresion opSuma Expresion'); const op=this.consume('opSuma'); const parent=new ASTNode('Expresion'); parent.add(left); parent.add(this.leafIfToken(op)); parent.add(this.expMul()); left=parent; } return left; }
+  expMul(){ let left=this.expUnary(); while(this.matchType('opMul')){ this.derivaciones.push('R46: Expresion → Expresion opMul Expresion'); const op=this.consume('opMul'); const parent=new ASTNode('Expresion'); parent.add(left); parent.add(this.leafIfToken(op)); parent.add(this.expUnary()); left=parent; } return left; }
+  expUnary(){ if(this.matchType('opSuma')|| this.matchType('opNot')){ const op=this.peek().type==='opSuma'?'R44: Expresion → opSuma Expresion':'R45: Expresion → opNot Expresion'; this.derivaciones.push(op); const opTok=this.consume(this.peek().type); const node=new ASTNode('Expresion'); node.add(this.leafIfToken(opTok)); node.add(this.expUnary()); return node; } if(this.matchType('(')){ this.derivaciones.push('R43: Expresion → ( Expresion )'); const node=new ASTNode('Expresion'); this.leafIfToken(this.consume('('), node); node.add(this.expresion()); this.leafIfToken(this.consume(')'), node); return node; } // fallback Termino
+    this.derivaciones.push('R52: Expresion → Termino'); return this.termino(); }
+
+  leafIfToken(tok, parent){ if(!tok) return null; const node=new ASTNode(tok.type,{type:'T', token:tok}); if(parent) parent.add(node); return node; }
+}
+
+// ==================== Motor principal =====================
+function parser(tokens){ const p=new Parser(tokens); return p.parse(); }
+let ultimoArbol=null; let ultimosTokens=[]; let autoScroll=true;
+function analizar(){
+  const input=document.getElementById('source').value;
+  const {tokens, errors}=lexer(input);
+  ultimosTokens = tokens;
+  renderTokens(tokens);
+  renderLexErrors(errors);
+  if(errors.length){ document.getElementById('syntax').innerHTML=''; document.getElementById('parse-tree').innerHTML=''; ultimoArbol=null; return; }
+  const result=parser(tokens);
+  renderSyntax(result);
+  if(result.root){ ultimoArbol=result.root; renderParseTree(result.root); aplicarProfundidad(document.getElementById('depthRange')?document.getElementById('depthRange').value:40); }
+    if(autoScroll){ const cont=document.getElementById('tree'); if(cont){ cont.scrollIntoView({behavior:'smooth',block:'center'}); } }
+}
+
+// ==================== Render =====================
+function renderTokens(tokens){ let html='<table><thead><tr><th>#</th><th>Tipo</th><th>Lexema</th><th>Pos</th></tr></thead><tbody>'; tokens.forEach((t,i)=>{ html+=`<tr><td>${i}</td><td>${t.type}</td><td>${escapeHtml(t.value)}</td><td>${t.pos}</td></tr>`; }); html+='</tbody></table>'; document.getElementById('tokens').innerHTML=html; }
+function renderLexErrors(errs){ document.getElementById('errors').innerHTML = errs.length? `<div class="error">${errs.join('<br>')}</div>`: ''; }
+function renderSyntax(res){
+  let html='';
+  if(res.errors.length){ html+=`<div class="error"><strong>Errores sintácticos:</strong><br>${res.errors.join('<br>')}</div>`; }
+  else if(res.accepted){ html+='<div class="success">Análisis sintáctico exitoso</div>'; }
+  html+='<details open><summary>Derivaciones</summary><ul class="derivaciones">'; res.derivaciones.forEach(d=> html+=`<li>${escapeHtml(d)}</li>`); html+='</ul></details>';
+  const syntaxPanel=document.getElementById('syntax'); if(syntaxPanel) syntaxPanel.innerHTML=html;
+  // Inline resumen
+  const inline=document.getElementById('syntax-inline');
+  if(inline){
+    const max=35; let resumen='';
+    if(res.errors.length){ resumen += `<div class=\"error\"><strong>${res.errors.length} error(es)</strong></div>`; }
+    else resumen += '<div class=\"success\">OK sintáctico</div>';
+    const slice=res.derivaciones.slice(0,max).map(d=>`<li>${escapeHtml(d)}</li>`).join('');
+    resumen += `<h4>Derivaciones (${res.derivaciones.length})</h4><ul>${slice}</ul>`;
+    if(res.derivaciones.length>max) resumen += `<div style='font-size:11px;opacity:.65;'>${res.derivaciones.length-max} más...</div>`;
+    inline.innerHTML=resumen;
+  }
+}
+function toggleAutoScroll(){ autoScroll=!autoScroll; const b=document.getElementById('btnAutoScroll'); if(b){ b.style.opacity=autoScroll?'1':'0.55'; b.textContent= autoScroll? '⬇️ AutoScroll':'⏸️ AutoScroll'; } }
+function renderParseTree(root){ const container=document.getElementById('parse-tree'); container.innerHTML = buildTreeHTML(root); etiquetarProfundidades(); enableTreeToggles(); }
+function buildTreeHTML(node){ if(!node) return ''; const isTerminal=node.type==='T'||(node.token && node.children.length===0); const hasChildren=node.children&&node.children.length; const cls='node-label '+(isTerminal?'node-terminal':'')+(hasChildren?' has-children':''); const label=isTerminal?`<span class="node-type">${escapeHtml(node.label)}</span>${node.token?`: <span class=\"node-token\">${escapeHtml(node.token.value)}</span>`:''}`:`<span class="node-type">${escapeHtml(node.label)}</span>`; if(!hasChildren){ return `<ul><li class="leaf"><span class="${cls}">${label}</span></li></ul>`;} let html=`<ul><li class="branch"><span class="${cls}">${label}</span>`; node.children.forEach(ch=> html+=buildTreeHTML(ch)); html+='</li></ul>'; return html; }
+
+// ===== Exportación Árbol y Tokens =====
+function astToObject(node){ if(!node) return null; return { label: node.label, tipo: node.type, token: node.token? {type: node.token.type, value: node.token.value, pos: node.token.pos}: null, hijos: node.children? node.children.map(c=>astToObject(c)) : [] }; }
+function exportarArbolJSON(){ if(!ultimoArbol){ alert('No hay árbol disponible.'); return; } const data = JSON.stringify(astToObject(ultimoArbol), null, 2); descargarArchivo(data, 'parse_tree.json', 'application/json'); }
+function exportarTokensCSV(){ if(!ultimosTokens.length){ alert('No hay tokens.'); return; } const encabezado='index,tipo,lexema,pos'; const filas=ultimosTokens.map((t,i)=>`${i},${t.type},"${t.value.replace(/"/g,'""')}",${t.pos}`); const csv=[encabezado,...filas].join('\n'); descargarArchivo(csv,'tokens.csv','text/csv'); }
+function descargarArchivo(contenido, nombre, mime){ const blob=new Blob([contenido],{type:mime}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=nombre; a.click(); setTimeout(()=> URL.revokeObjectURL(a.href), 1000); }
+
+// ===== Control de Profundidad =====
+function aplicarProfundidad(valor){ const v=parseInt(valor,10); const label=document.getElementById('depthValue'); if(!ultimoArbol){ if(label) label.textContent='—'; return; }
+  if(v>=40){ if(label) label.textContent='∞'; mostrarTodo(); return; }
+  if(label) label.textContent=v;
+  const cont=document.getElementById('parse-tree');
+  // recalcular depth real
+  function setDepth(ul,d){ [...ul.children].forEach(li=>{ li.dataset.depth=d; const subUls=[...li.querySelectorAll(':scope > ul')]; subUls.forEach(su=> setDepth(su,d+1)); }); }
+  [...cont.children].forEach(rootUl=> setDepth(rootUl,0));
+  cont.querySelectorAll('li').forEach(li=>{ const d=parseInt(li.dataset.depth||'0',10); li.style.display = d>v ? 'none':''; });
+}
+function resetProfundidad(){ const range=document.getElementById('depthRange'); if(range){ range.value=40; aplicarProfundidad(40); } }
+function mostrarTodo(){ const cont=document.getElementById('parse-tree'); cont.querySelectorAll('li').forEach(li=> li.style.display=''); }
+
+function expandirArbol(){ document.querySelectorAll('#parse-tree li.collapsed').forEach(li=> li.classList.remove('collapsed')); aplicarProfundidad(document.getElementById('depthRange')?document.getElementById('depthRange').value:40); }
+function colapsarArbol(){ const root=document.querySelector('#parse-tree > ul > li'); if(!root) return; document.querySelectorAll('#parse-tree li.branch').forEach(li=>{ if(li!==root) li.classList.add('collapsed'); }); }
+function enableTreeToggles(){ const tree=document.getElementById('parse-tree'); tree.addEventListener('click', e=>{ const label=e.target.closest('.node-label'); if(!label) return; const li=label.closest('li'); if(li && li.classList.contains('branch')) li.classList.toggle('collapsed'); }); }
+function etiquetarProfundidades(){ const container=document.getElementById('parse-tree'); if(!container) return; const roots=[...container.children].filter(c=> c.tagName==='UL'); function setDepth(ul,d){ [...ul.children].forEach(li=>{ li.dataset.depth=d; [...li.children].filter(c=> c.tagName==='UL').forEach(cu=> setDepth(cu,d+1)); }); } roots.forEach(r=> setDepth(r,0)); }
+function escapeHtml(str){ return str.replace(/[&<>"']/g, c=> ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+
+// ==================== Ejemplo =====================
+const ejemplo = `int a;\nint suma(int a, int b){\n  return a + b;\n}\n\nint main(){\n  float a;\n  int b;\n  int c;\n  c = a + b;\n  c = suma(8, 9);\n}`;
+function cargarEjemplo(){ document.getElementById('source').value = ejemplo; }
+window.onload = () => { cargarEjemplo(); analizar(); };
+
+// ==================== Animación LR (demo estática) =====================
+const steps1=[
+  {pila:'$0', entrada:'a+b$', salida:'d2'},
+  {pila:'$0a2', entrada:'+b$', salida:'d3'},
+  {pila:'$0a2+3', entrada:'b$', salida:'d4'},
+  {pila:'$0a2+3b4', entrada:'$', salida:'r1 E->id+id'},
+  {pila:'$0E1', entrada:'$', salida:'acept'}
+];
+function startAnimation(steps, bodyId){ const body=document.getElementById(bodyId); body.innerHTML=''; let i=0; let prev=null; const interval=setInterval(()=>{ if(i<steps.length){ const s=steps[i]; const tr=document.createElement('tr'); tr.innerHTML=`<td>${s.pila}</td><td>${s.entrada}</td><td>${s.salida}</td>`; tr.classList.add('active'); body.appendChild(tr); if(prev) prev.classList.remove('active'); prev=tr; i++; } else { if(prev) prev.classList.remove('active'); clearInterval(interval); } }, 1200); }
+function startAnimation1(){ startAnimation(steps1,'animation-body-1'); }
+</script>
+</body>
+</html>
